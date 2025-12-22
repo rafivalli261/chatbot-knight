@@ -1,0 +1,10 @@
+__pylance__/
+.vscode/
+bin
+lib
+lib64
+__pycache__/
+pyvenv.cfg
+share
+hf_cache
+node_modules/
