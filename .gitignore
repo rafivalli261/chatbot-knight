@@ -8,3 +8,4 @@ pyvenv.cfg
 share
 hf_cache
 node_modules/
+include
