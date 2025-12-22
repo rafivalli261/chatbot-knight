@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+sse-starlette
+
+chromadb
+sentence-transformers
+pymupdf
+
+# vLLM (GPU-focused; install matching CUDA build for your environment)
+vllm
+
+# Useful utilities
+pydantic
+python-dotenv
+numpy
+
+transformers
