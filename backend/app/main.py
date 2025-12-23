@@ -12,12 +12,13 @@ from .vllm_engine import VLLMEngine
 app = FastAPI(title="RAG Chatbot (FastAPI + vLLM + Chroma + SSE)")
 
 # Adjust origins for your Next.js dev/prod domains
+# allow_origins=[
+        # "http://localhost:3000",
+        # "http://localhost:6379",],
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:6379",],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -33,7 +34,7 @@ def health():
 async def chat_stream(req: ChatRequest):
     prompt, hits = rag.build_prompt(req.message)
     prompt = llm.build_chat_prompt(prompt)
-    
+
     request_id = str(uuid.uuid4())
     sampling = llm.sampling_params()
 
@@ -65,7 +66,12 @@ async def chat_stream(req: ChatRequest):
         except Exception as e:
             yield {"event": "error", "data": json.dumps({"message": str(e)})}
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(
+        event_generator(),
+        headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",  # important for nginx/proxy buffering
+    })
 
 @app.get("/chat/stream-get")
 async def chat_stream_get(message: str = Query(..., min_length=1)):
