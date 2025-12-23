@@ -40,8 +40,9 @@ curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
 source ~/.bashrc # or ~/.zshrc, depending on your shell
 nvm install --lts
 
-npm i
-npm i -D typescript @types/react @types/node
+cd frontend
+npx create-next-app@latest . --ts --app
+npm install
 ```
 
 ### 5. Run Frontend
@@ -49,3 +50,5 @@ npm i -D typescript @types/react @types/node
 cd frontend
 npm run dev
 ```
+
+## Still in Error CORS Origin or something

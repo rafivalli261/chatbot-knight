@@ -14,7 +14,9 @@ app = FastAPI(title="RAG Chatbot (FastAPI + vLLM + Chroma + SSE)")
 # Adjust origins for your Next.js dev/prod domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:6379",],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

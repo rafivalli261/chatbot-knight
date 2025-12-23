@@ -11,7 +11,7 @@ export default function Chat() {
   const [isStreaming, setIsStreaming] = useState(false);
 
   const backendUrl = useMemo(
-    () => process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000",
+    () => "https://qw0gq45mfv33c0-8000.proxy.runpod.net",
     []
   );
   
