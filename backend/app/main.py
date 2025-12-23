@@ -30,7 +30,8 @@ def health():
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
     prompt, hits = rag.build_prompt(req.message)
-
+    prompt = llm.build_chat_prompt(prompt)
+    
     request_id = str(uuid.uuid4())
     sampling = llm.sampling_params()
 
