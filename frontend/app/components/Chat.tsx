@@ -4,103 +4,306 @@ import React, { useMemo, useRef, useState } from "react";
 
 type Source = { source?: string; chunk_index?: number; distance?: number };
 
+type ChatMsg =
+  | { role: "user"; text: string }
+  | { role: "assistant"; text: string; sources?: Source[]; ms?: number };
+
 export default function Chat() {
-  const [message, setMessage] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [sources, setSources] = useState<Source[]>([]);
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
 
-  const backendUrl = useMemo(
-    () => "https://qw0gq45mfv33c0-8000.proxy.runpod.net",
-    []
-  );
-  
   const esRef = useRef<EventSource | null>(null);
+  const t0Ref = useRef<number>(0);
 
-  const startChat = async () => {
-    setAnswer("");
-    setSources([]);
+  // GANTI ke URL backend kamu.
+  // Contoh runpod:
+  // "https://qw0gq45mfv33c0-8000.proxy.runpod.net"
+  const backendUrl = useMemo(() => "http://localhost:8000", []);
+
+  const stop = () => {
+    esRef.current?.close();
+    esRef.current = null;
+    setIsStreaming(false);
+  };
+
+  const send = () => {
+    const text = input.trim();
+    if (!text || isStreaming) return;
+
+    // push user msg
+    setMessages((prev) => [...prev, { role: "user", text }, { role: "assistant", text: "" }]);
+    setInput("");
     setIsStreaming(true);
 
-    // SSE with POST is not supported by native EventSource.
-    // Workaround: create an SSE GET endpoint, OR use fetch + ReadableStream.
-    // Since you requested SSE + AsyncLLMEngine, simplest is to expose a GET stream:
-    // We'll do a small trick: use a GET endpoint with query param.
-    // If you prefer POST, tell me and I'll switch to fetch-stream.
-    const url = `${backendUrl}/chat/stream-get?message=${encodeURIComponent(message)}`;
+    // start timer
+    t0Ref.current = performance.now();
 
+    // close previous stream if any
+    esRef.current?.close();
+
+    const url = `${backendUrl}/chat/stream-get?message=${encodeURIComponent(text)}`;
     const es = new EventSource(url);
     esRef.current = es;
 
     es.addEventListener("sources", (ev) => {
       const payload = JSON.parse((ev as MessageEvent).data);
-      setSources(payload.sources ?? []);
+      const sources: Source[] = payload.sources ?? [];
+
+      setMessages((prev) => {
+        const copy = [...prev];
+        // last message should be assistant placeholder
+        const lastIdx = copy.length - 1;
+        const last = copy[lastIdx];
+        if (last && last.role === "assistant") {
+          copy[lastIdx] = { ...last, sources };
+        }
+        return copy;
+      });
     });
 
     es.addEventListener("token", (ev) => {
       const payload = JSON.parse((ev as MessageEvent).data);
-      setAnswer(payload.text ?? "");
+      const chunk = payload.text ?? "";
+      setMessages((prev) => {
+        const copy = [...prev];
+        const lastIdx = copy.length - 1;
+        const last = copy[lastIdx];
+        if (last && last.role === "assistant") {
+          copy[lastIdx] = { ...last, text: chunk };
+        }
+        return copy;
+      });
     });
 
     es.addEventListener("done", () => {
+      const ms = Math.round(performance.now() - t0Ref.current)/1000;
       es.close();
+      esRef.current = null;
       setIsStreaming(false);
+
+      setMessages((prev) => {
+        const copy = [...prev];
+        const lastIdx = copy.length - 1;
+        const last = copy[lastIdx];
+        if (last && last.role === "assistant") {
+          copy[lastIdx] = { ...last, ms };
+        }
+        return copy;
+      });
     });
 
     es.addEventListener("error", () => {
       es.close();
+      esRef.current = null;
       setIsStreaming(false);
+
+      setMessages((prev) => {
+        const copy = [...prev];
+        const lastIdx = copy.length - 1;
+        const last = copy[lastIdx];
+        if (last && last.role === "assistant" && !last.text) {
+          copy[lastIdx] = {
+            ...last,
+            text:
+              "⚠️ Stream error (CORS/proxy). Pastikan FastAPI mengizinkan origin frontend dan SSE tidak dibuffer.",
+          };
+        }
+        return copy;
+      });
     });
   };
 
-  const stop = () => {
-    esRef.current?.close();
-    setIsStreaming(false);
+  const onKeyDown: React.KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
   };
 
   return (
-    <div style={{ maxWidth: 900, margin: "40px auto", padding: 16 }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700 }}>RAG Chatbot</h1>
-
-      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <input
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          placeholder="Ask something from your PDFs..."
-          style={{ flex: 1, padding: 12, border: "1px solid #ddd", borderRadius: 8 }}
-        />
-        <button
-          onClick={startChat}
-          disabled={!message || isStreaming}
-          style={{ padding: "12px 16px", borderRadius: 8, cursor: "pointer" }}
-        >
-          Send
-        </button>
-        <button
-          onClick={stop}
-          disabled={!isStreaming}
-          style={{ padding: "12px 16px", borderRadius: 8, cursor: "pointer" }}
-        >
-          Stop
-        </button>
-      </div>
-
-      <div style={{ marginTop: 16, padding: 12, border: "1px solid #eee", borderRadius: 8, minHeight: 160 }}>
-        <div style={{ whiteSpace: "pre-wrap" }}>{answer}</div>
-      </div>
-
-      {sources.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 700 }}>Sources</h2>
-          <ul>
-            {sources.map((s, i) => (
-              <li key={i}>
-                {s.source} (chunk {s.chunk_index}) — dist: {s.distance?.toFixed?.(4) ?? s.distance}
-              </li>
-            ))}
-          </ul>
+    <div style={styles.shell}>
+      <div style={styles.header}>
+        <div style={styles.brand}>RAG Chatbot</div>
+        <div style={styles.sub}>
+          {isStreaming ? "Thinking…" : "Ready"} · Backend: {backendUrl}
         </div>
-      )}
+      </div>
+
+      <div style={styles.chat}>
+        {messages.length === 0 ? (
+          <div style={styles.empty}>
+            Tulis pertanyaan tentang PDF kamu. Sources dan streaming akan muncul di sini.
+          </div>
+        ) : (
+          messages.map((m, i) => (
+            <div
+              key={i}
+              style={{
+                ...styles.row,
+                justifyContent: m.role === "user" ? "flex-end" : "flex-start",
+              }}
+            >
+              <div
+                style={{
+                  ...styles.bubble,
+                  ...(m.role === "user" ? styles.userBubble : styles.assistantBubble),
+                }}
+              >
+                <div style={styles.text}>{m.text}</div>
+
+                {m.role === "assistant" && (
+                  <div style={styles.meta}>
+                    {typeof m.ms === "number" ? <span>{m.ms} s</span> : isStreaming ? <span>streaming…</span> : null}
+                  </div>
+                )}
+
+                {m.role === "assistant" && m.sources && m.sources.length > 0 && (
+                  <details style={styles.sources}>
+                    <summary style={styles.sourcesSummary}>Sources ({m.sources.length})</summary>
+                    <div style={styles.sourcesBox}>
+                      {m.sources.map((s, idx) => (
+                        <div key={idx} style={styles.sourceItem}>
+                          <div style={styles.sourceTop}>
+                            <span style={styles.sourceName}>{s.source ?? "unknown"}</span>
+                            <span style={styles.sourceSmall}>
+                              chunk {s.chunk_index ?? "?"} · dist{" "}
+                              {typeof s.distance === "number" ? s.distance.toFixed(4) : "?"}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div style={styles.composer}>
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="Ask something… (Enter untuk kirim, Shift+Enter untuk baris baru)"
+          style={styles.input}
+          rows={2}
+          disabled={false}
+        />
+        <div style={styles.actions}>
+          <button onClick={send} disabled={!input.trim() || isStreaming} style={styles.btnPrimary}>
+            Send
+          </button>
+          <button onClick={stop} disabled={!isStreaming} style={styles.btnGhost}>
+            Stop
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
+
+const styles: Record<string, React.CSSProperties> = {
+  shell: {
+    height: "100vh",
+    display: "grid",
+    gridTemplateRows: "auto 1fr auto",
+    background: "#0b0f17",
+    color: "#e7eaf0",
+  },
+  header: {
+    padding: "14px 18px",
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(11,15,23,0.7)",
+    backdropFilter: "blur(10px)",
+  },
+  brand: { fontSize: 14, fontWeight: 700, letterSpacing: 0.2 },
+  sub: { fontSize: 12, opacity: 0.7, marginTop: 2 },
+  chat: {
+    padding: "18px",
+    overflow: "auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  empty: {
+    maxWidth: 720,
+    margin: "80px auto 0",
+    padding: 18,
+    border: "1px dashed rgba(255,255,255,0.18)",
+    borderRadius: 14,
+    opacity: 0.8,
+    lineHeight: 1.5,
+  },
+  row: { display: "flex" },
+  bubble: {
+    maxWidth: 820,
+    padding: "12px 14px",
+    borderRadius: 16,
+    border: "1px solid rgba(255,255,255,0.10)",
+    boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
+  },
+  userBubble: { background: "rgba(84, 121, 255, 0.18)" },
+  assistantBubble: { background: "rgba(255,255,255,0.06)" },
+  text: { whiteSpace: "pre-wrap", lineHeight: 1.55, fontSize: 14 },
+  meta: { marginTop: 8, fontSize: 12, opacity: 0.65 },
+  sources: { marginTop: 10 },
+  sourcesSummary: { cursor: "pointer", fontSize: 12, opacity: 0.85 },
+  sourcesBox: {
+    marginTop: 10,
+    borderRadius: 12,
+    padding: 10,
+    background: "rgba(0,0,0,0.25)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    display: "grid",
+    gap: 8,
+  },
+  sourceItem: { padding: 10, borderRadius: 10, background: "rgba(255,255,255,0.05)" },
+  sourceTop: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" },
+  sourceName: { fontSize: 12, fontWeight: 700 },
+  sourceSmall: { fontSize: 12, opacity: 0.7 },
+  composer: {
+    padding: "14px 18px",
+    borderTop: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(11,15,23,0.7)",
+    backdropFilter: "blur(10px)",
+    display: "grid",
+    gridTemplateColumns: "1fr auto",
+    gap: 12,
+    alignItems: "end",
+  },
+  input: {
+    width: "100%",
+    resize: "none",
+    padding: "12px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.06)",
+    color: "#e7eaf0",
+    outline: "none",
+    fontSize: 14,
+    lineHeight: 1.4,
+  },
+  actions: { display: "flex", gap: 10 },
+  btnPrimary: {
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(84, 121, 255, 0.35)",
+    color: "#e7eaf0",
+    cursor: "pointer",
+    fontWeight: 700,
+  },
+  btnGhost: {
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "transparent",
+    color: "#e7eaf0",
+    cursor: "pointer",
+    fontWeight: 700,
+    opacity: 0.9,
+  },
+};
